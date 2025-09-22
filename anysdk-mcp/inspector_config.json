@@ -27,6 +27,19 @@
             }
         },
         {
+            "name": "Azure Auto-Discovery",
+            "description": "Auto-discovered Azure Management SDK operations (~200+ tools)",
+            "command": "python",
+            "args": [
+                "/Users/alankritverma/projects/anysdk-mcp/anysdk-mcp/mcp_server.py",
+                "--sdk",
+                "azure-auto"
+            ],
+            "env": {
+                "PYTHONPATH": "/Users/alankritverma/projects/anysdk-mcp/anysdk-mcp"
+            }
+        },
+        {
             "name": "GitHub Curated",
             "description": "Hand-selected GitHub operations (repos, issues, PRs)",
             "command": "python",

@@ -18,6 +18,7 @@ from mcp.server.fastmcp import FastMCP
 # Lazy imports inside setup_adapter to avoid hard deps on curated adapters
 from .adapters.auto_k8s import K8sAutoAdapter, K8sAutoConfig
 from .adapters.auto_github import GitHubAutoAdapter, GitHubAutoConfig
+from .adapters.auto_azure import AzureAutoAdapter, AzureAutoConfig
 from .core.safety import SafetyWrapper, SafetyConfig, RateLimitConfig, SecurityContext
 from .core.classify import classify_method, get_operation_risk_level
 from .core.planapply import Planner
@@ -41,7 +42,7 @@ class MCPBridgeServer:
                 max_execution_time_seconds=safety_cfg.get("max_execution_time_seconds", 300),
                 allowed_methods=set(safety_cfg.get("allowed_operations", []) or []),
                 blocked_methods=set(safety_cfg.get("blocked_operations", []) or []),
-                require_auth=bool(safety_cfg.get("require_auth", False)),
+                require_auth=bool(safety_cfg.get("require_auth", False)),  # Default to false for auto-adapters
                 sanitize_inputs=bool(safety_cfg.get("sanitize_inputs", True)),
                 log_operations=bool(safety_cfg.get("log_operations", True)),
             ),
@@ -87,8 +88,19 @@ class MCPBridgeServer:
             )
             self.adapter = GitHubAutoAdapter(config=github_config)
             
+        elif self.sdk_name == "azure-auto":
+            azure_config = AzureAutoConfig(
+                tenant_id=self.config.get("tenant_id") or os.environ.get("AZURE_TENANT_ID"),
+                client_id=self.config.get("client_id") or os.environ.get("AZURE_CLIENT_ID"),
+                client_secret=self.config.get("client_secret") or os.environ.get("AZURE_CLIENT_SECRET"),
+                subscription_id=self.config.get("subscription_id") or os.environ.get("AZURE_SUBSCRIPTION_ID"),
+                discover_roots=self.config.get("azure", {}).get("discover", {}).get("roots"),
+                lro_poll_interval=self.config.get("azure", {}).get("lro", {}).get("poll_interval_seconds", 2.0)
+            )
+            self.adapter = AzureAutoAdapter(config=azure_config)
+            
         else:
-            raise ValueError(f"Unsupported SDK: {self.sdk_name}. Available: github, k8s, k8s-auto, github-auto")
+            raise ValueError(f"Unsupported SDK: {self.sdk_name}. Available: github, k8s, k8s-auto, github-auto, azure-auto")
     
     def register_tools(self):
         """Register MCP tools from the adapter"""
@@ -111,10 +123,12 @@ class MCPBridgeServer:
             if not tool_schema:
                 continue
             
-            # Classify operation type
-            method_name = tool_name.split(".", 1)[1] if "." in tool_name else tool_name
-            op_type = classify_method(method_name)
-            risk_level = get_operation_risk_level(method_name)
+            # Classify operation type - extract actual method name from tool name
+            # e.g. "azure.VirtualMachinesOperations_begin_delete" -> "begin_delete"
+            raw_method = tool_name.split(".", 1)[1] if "." in tool_name else tool_name
+            actual_method = raw_method.split("_", 1)[1] if "_" in raw_method else raw_method
+            op_type = classify_method(actual_method)
+            risk_level = get_operation_risk_level(actual_method)
             
             # Wrap with safety controls
             safe_impl = self.safety.safe_wrap(implementation, method_name=tool_name)
@@ -122,7 +136,7 @@ class MCPBridgeServer:
             if op_type == "write":
                 write_count += 1
                 # For write operations, expose both .plan and .apply tools
-                def make_plan_impl(name=tool_name, impl=safe_impl):
+                def make_plan_impl(name=tool_name):
                     def _plan(**kwargs):
                         return self.planner.plan(
                             tool_name=name,
@@ -133,13 +147,22 @@ class MCPBridgeServer:
                     return _plan
                 
                 def make_apply_impl(name=tool_name, impl=safe_impl):
-                    def _apply(plan_id: str):
-                        def executor():
-                            plan = self.planner.get_plan(plan_id)
-                            if not plan:
-                                raise ValueError(f"Plan {plan_id} not found")
-                            return impl(**plan.args)
-                        return self.planner.apply(plan_id, executor)
+                    async def _apply(plan_id: str):
+                        plan = self.planner.get_plan(plan_id)
+                        if not plan:
+                            return {"error": {"type": "PlanNotFound", "message": f"Plan {plan_id} not found"}}
+                        
+                        # Execute the implementation (handling both sync and async)
+                        try:
+                            if asyncio.iscoroutinefunction(impl):
+                                result = await impl(**plan.args)
+                            else:
+                                result = await asyncio.to_thread(impl, **plan.args)
+                            
+                            # Apply the plan with the result
+                            return self.planner.apply(plan_id, lambda: result)
+                        except Exception as e:
+                            return {"error": {"type": type(e).__name__, "message": str(e)}}
                     return _apply
                 
                 # Register plan tool
@@ -217,7 +240,8 @@ def list_available_sdks():
         ("github", "Curated GitHub adapter"),
         ("k8s", "Curated Kubernetes adapter"), 
         ("github-auto", "Auto-discovered GitHub adapter (comprehensive)"),
-        ("k8s-auto", "Auto-discovered Kubernetes adapter (comprehensive)")
+        ("k8s-auto", "Auto-discovered Kubernetes adapter (comprehensive)"),
+        ("azure-auto", "Auto-discovered Azure Management SDK adapter (comprehensive)")
     ]
     print("Available SDKs:")
     for sdk, description in sdks:
@@ -256,6 +280,31 @@ def validate_sdk_requirements(sdk_name: str, config: Dict[str, Any]) -> bool:
         if sdk_name == "k8s-auto":
             print("🚀 K8s auto adapter will discover all *Api client methods")
     
+    elif base_sdk == "azure":
+        tenant_id = config.get("tenant_id") or os.environ.get("AZURE_TENANT_ID")
+        client_id = config.get("client_id") or os.environ.get("AZURE_CLIENT_ID")
+        client_secret = config.get("client_secret") or os.environ.get("AZURE_CLIENT_SECRET")
+        subscription_id = config.get("subscription_id") or os.environ.get("AZURE_SUBSCRIPTION_ID")
+        
+        missing_vars = []
+        if not tenant_id:
+            missing_vars.append("AZURE_TENANT_ID")
+        if not client_id:
+            missing_vars.append("AZURE_CLIENT_ID")
+        if not client_secret:
+            missing_vars.append("AZURE_CLIENT_SECRET")
+        if not subscription_id:
+            missing_vars.append("AZURE_SUBSCRIPTION_ID")
+            
+        if missing_vars:
+            print(f"⚠️  Azure credentials not found: {', '.join(missing_vars)}")
+            print("   Auto adapter will discover methods but calls will fail without proper authentication.")
+        else:
+            print("✅ Azure credentials found")
+        
+        if sdk_name == "azure-auto":
+            print("🚀 Azure auto adapter will discover all Azure Management SDK operations")
+    
     return True
 
 
@@ -278,7 +327,7 @@ Examples:
     
     # Up command
     up_parser = subparsers.add_parser("up", help="Launch MCP server")
-    up_parser.add_argument("--sdk", required=True, choices=["github", "k8s", "github-auto", "k8s-auto"], 
+    up_parser.add_argument("--sdk", required=True, choices=["github", "k8s", "github-auto", "k8s-auto", "azure-auto"], 
                           help="SDK to bridge")
     up_parser.add_argument("--config", help="Path to configuration file")
     up_parser.add_argument("--validate", action="store_true", 
@@ -292,7 +341,7 @@ Examples:
     
     # Validate command
     validate_parser = subparsers.add_parser("validate", help="Validate SDK setup")
-    validate_parser.add_argument("--sdk", required=True, choices=["github", "k8s", "github-auto", "k8s-auto"],
+    validate_parser.add_argument("--sdk", required=True, choices=["github", "k8s", "github-auto", "k8s-auto", "azure-auto"],
                                help="SDK to validate")
     validate_parser.add_argument("--config", help="Path to configuration file")
     

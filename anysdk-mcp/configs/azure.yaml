@@ -1,0 +1,89 @@
+# Azure Management SDK Configuration
+# Configuration for the Azure auto-adapter
+
+# Rate limiting configuration
+rate_limit:
+  requests_per_minute: 60
+  requests_per_hour: 1000
+  burst_size: 15
+
+# Safety and security configuration
+safety:
+  max_response_size_mb: 8
+  max_execution_time_seconds: 120
+  require_auth: false  # Set to false for auto-adapters (Azure/GitHub/K8s handle their own auth)
+  sanitize_inputs: true
+  log_operations: true
+  # Operations that are always allowed (even if risky)
+  allowed_operations: []
+  # Operations that are always blocked
+  blocked_operations: []
+
+# Feature flags
+features:
+  llm_enrichment: false  # Enable LLM-based description enrichment
+  plan_apply: true       # Enable plan/apply pattern for write operations
+  pagination: true       # Enable standardized pagination
+  lro_support: true      # Enable Long Running Operation support
+
+# Azure-specific configuration
+azure:
+  # Authentication (will fall back to environment variables)
+  # tenant_id: ""        # AZURE_TENANT_ID
+  # client_id: ""        # AZURE_CLIENT_ID  
+  # client_secret: ""    # AZURE_CLIENT_SECRET
+  # subscription_id: ""  # AZURE_SUBSCRIPTION_ID
+  
+  # Discovery configuration
+  discover:
+    # Azure management SDK roots to scan
+    roots:
+      - azure.mgmt.compute
+      - azure.mgmt.resource
+      - azure.mgmt.network
+      - azure.mgmt.storage
+      - azure.mgmt.keyvault
+      - azure.mgmt.sql
+      - azure.mgmt.web
+      - azure.mgmt.monitor
+      - azure.mgmt.authorization
+      - azure.mgmt.containerservice
+      - azure.mgmt.cosmosdb
+      - azure.mgmt.redis
+      - azure.mgmt.servicebus
+      - azure.mgmt.eventhub
+      - azure.mgmt.batch
+      - azure.mgmt.cdn
+      - azure.mgmt.dns
+      - azure.mgmt.trafficmanager
+    
+    # Limits to prevent overwhelming discovery
+    max_methods_per_class: 100
+    include_private: false
+  
+  # Long Running Operations configuration
+  lro:
+    poll_interval_seconds: 2.0
+    max_poll_attempts: 300  # 10 minutes at 2s intervals
+    timeout_seconds: 600    # Overall timeout
+    
+  # Pagination configuration
+  pagination:
+    default_page_size: 50
+    max_page_size: 1000
+    
+# LLM enrichment configuration (when enabled)
+llm:
+  provider: openai
+  model: gpt-4o-mini
+  max_cost_usd: 5.0
+  temperature: 0
+  cache_enrichments: true
+  cache_file: .mcp_cache/azure_enrichment.json
+
+# Logging configuration
+logging:
+  level: INFO
+  structured: true
+  include_request_id: true
+  log_file: logs/azure_adapter.log

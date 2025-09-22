@@ -32,12 +32,14 @@ def main():
         formatter_class=argparse.RawDescriptionHelpFormatter,
         epilog="""
 Environment Variables:
-  MCP_SDK        SDK to use (github, k8s, github-auto, k8s-auto)
+  MCP_SDK        SDK to use (github, k8s, github-auto, k8s-auto, azure-auto)
   GITHUB_TOKEN   GitHub authentication token
   KUBECONFIG     Path to Kubernetes config file
+  AZURE_TENANT_ID, AZURE_CLIENT_ID, AZURE_CLIENT_SECRET, AZURE_SUBSCRIPTION_ID
 
 Examples:
   python mcp_server.py --sdk github-auto
+  python mcp_server.py --sdk azure-auto
   MCP_SDK=github-auto python mcp_server.py
   GITHUB_TOKEN=ghp_xxx python mcp_server.py --sdk github
         """
@@ -46,7 +48,7 @@ Examples:
     parser.add_argument(
         "--sdk", 
         default=os.environ.get("MCP_SDK", "github-auto"),
-        choices=["github", "k8s", "github-auto", "k8s-auto"],
+        choices=["github", "k8s", "github-auto", "k8s-auto", "azure-auto"],
         help="SDK to bridge (default: github-auto)"
     )
     
