@@ -1,7 +1,7 @@
 [project]
 name = "anysdk-mcp"
 version = "0.1.0"
-description = "Add your description here"
+description = "MCP SDK Bridge - Bridge between MCP servers and various SDK APIs"
 readme = "README.md"
 requires-python = ">=3.13"
 dependencies = [
@@ -9,7 +9,28 @@ dependencies = [
     "pygithub>=2.8.1",
     "pytest>=8.4.2",
     "pytest-asyncio>=0.24.0",
+    "pyyaml>=6.0",
+    "click>=8.1.0",
 ]
+
+[project.optional-dependencies]
+k8s = [
+    "kubernetes>=31.0.0",
+]
+azure = [
+    "azure-identity>=1.15.0",
+    "azure-mgmt-resource>=23.0.0",
+    "azure-mgmt-compute>=30.0.0",
+    "azure-mgmt-storage>=21.0.0",
+]
+dev = [
+    "pytest-cov>=4.0.0",
+    "black>=23.0.0",
+    "ruff>=0.1.0",
+]
+
+[project.scripts]
+mcp-bridge = "mcp_sdk_bridge.cli:main"
 
 [tool.pytest.ini_options]
 asyncio_mode = "auto"
@@ -17,3 +38,17 @@ testpaths = ["tests"]
 python_files = ["test_*.py"]
 python_functions = ["test_*"]
 python_classes = ["Test*"]
+addopts = "--tb=short -v"
+
+[tool.black]
+line-length = 88
+target-version = ['py313']
+
+[tool.ruff]
+line-length = 88
+target-version = "py313"
+select = ["E", "F", "W", "I", "N", "UP", "S", "B", "A", "COM", "C4", "DTZ", "T20", "RET", "SIM", "ARG", "PTH", "PL", "RUF"]
+ignore = ["S101", "PLR2004", "PLR0913", "COM812", "RET505"]
+
+[tool.ruff.per-file-ignores]
+"tests/*" = ["S101", "PLR2004", "ARG001"]
