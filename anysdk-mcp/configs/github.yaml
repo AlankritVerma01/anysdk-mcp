@@ -1,0 +1,69 @@
+# anysdk-mcp/configs/github.yaml
+
+# GitHub SDK Configuration for MCP Bridge
+# 
+# This configuration file defines settings for the GitHub SDK adapter.
+# You can override these settings with environment variables or command-line options.
+
+# GitHub API Token
+# Can be set via GITHUB_TOKEN environment variable
+# token: "your_github_token_here"
+
+# Rate limiting settings
+rate_limit:
+  requests_per_minute: 60
+  requests_per_hour: 1000
+  burst_size: 10
+
+# Safety settings
+safety:
+  max_response_size_mb: 10
+  max_execution_time_seconds: 300
+  require_auth: false
+  sanitize_inputs: true
+  log_operations: true
+
+# GitHub-specific settings
+github:
+  # Default user for operations (optional)
+  # default_user: "octocat"
+  
+  # Default organization (optional)
+  # default_org: "your-org"
+  
+  # Maximum number of items to return per request
+  max_items_per_request: 100
+  
+  # Enable/disable specific capabilities
+  capabilities:
+    repository_management: true
+    issue_management: true
+    pull_request_management: true
+    # organization_management: false  # Requires org permissions
+    # team_management: false          # Requires org permissions
+
+# Pagination settings
+pagination:
+  default_page_size: 30
+  max_pages: 10
+
+# Caching settings (if implemented)
+cache:
+  enabled: false
+  ttl_seconds: 300
+
+# Logging configuration
+logging:
+  level: "INFO"
+  format: "%(asctime)s - %(name)s - %(levelname)s - %(message)s"
+  
+# Development settings
+dev:
+  # Enable debug mode
+  debug: false
+  
+  # Enable API request logging
+  log_requests: false
+  
+  # Mock responses for testing (useful when rate limited)
+  mock_responses: false

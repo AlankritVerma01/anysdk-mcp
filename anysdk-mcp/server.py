@@ -1,4 +1,4 @@
-# server.py
+# anysdk-mcp/server.py
 from mcp.server.fastmcp import FastMCP
 from typing import List
 import os

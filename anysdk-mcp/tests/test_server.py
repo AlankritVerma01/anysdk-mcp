@@ -1,4 +1,5 @@
-# tests/test_server.py
+# anysdk-mcp/tests/test_server.py
+
 import asyncio
 import os
 import pytest

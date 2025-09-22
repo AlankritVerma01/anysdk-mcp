@@ -1,9 +1,11 @@
+# anysdk-mcp/pyproject.toml
+
 [project]
 name = "anysdk-mcp"
 version = "0.1.0"
 description = "MCP SDK Bridge - Bridge between MCP servers and various SDK APIs"
 readme = "README.md"
-requires-python = ">=3.13"
+requires-python = ">=3.11"
 dependencies = [
     "mcp[cli]>=1.14.1",
     "pygithub>=2.8.1",
@@ -11,6 +13,7 @@ dependencies = [
     "pytest-asyncio>=0.24.0",
     "pyyaml>=6.0",
     "click>=8.1.0",
+    "az>=0.1.0.dev1",
 ]
 
 [project.optional-dependencies]

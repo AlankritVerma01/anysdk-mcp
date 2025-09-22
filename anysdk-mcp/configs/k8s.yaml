@@ -1,0 +1,104 @@
+# anysdk-mcp/configs/k8s.yaml
+
+# Kubernetes SDK Configuration for MCP Bridge
+#
+# This configuration file defines settings for the Kubernetes SDK adapter.
+# You can override these settings with environment variables or command-line options.
+
+# Kubernetes cluster configuration
+kubernetes:
+  # Path to kubeconfig file (optional, defaults to ~/.kube/config)
+  # Can be set via KUBECONFIG environment variable
+  # kubeconfig_path: "~/.kube/config"
+  
+  # Kubernetes context to use (optional, uses current context if not specified)
+  # context: "my-cluster-context"
+  
+  # Default namespace for operations
+  namespace: "default"
+  
+  # Timeout for API requests (seconds)
+  timeout: 30
+  
+  # Verify SSL certificates
+  verify_ssl: true
+
+# Rate limiting settings
+rate_limit:
+  requests_per_minute: 120
+  requests_per_hour: 2000
+  burst_size: 20
+
+# Safety settings
+safety:
+  max_response_size_mb: 50  # K8s can return large objects
+  max_execution_time_seconds: 300
+  require_auth: true
+  sanitize_inputs: true
+  log_operations: true
+  
+  # Kubernetes-specific safety settings
+  allowed_namespaces: []  # Empty means all namespaces allowed
+  blocked_namespaces: ["kube-system", "kube-public", "kube-node-lease"]
+  
+  # Allowed operations (empty means all allowed)
+  allowed_operations: []
+  
+  # Blocked operations for safety
+  blocked_operations:
+    - "delete_namespace"
+    - "delete_cluster_role"
+    - "delete_cluster_role_binding"
+
+# Kubernetes-specific settings
+k8s:
+  # Maximum number of items to return per request
+  max_items_per_request: 100
+  
+  # Default label selector for list operations
+  # default_label_selector: "app=my-app"
+  
+  # Enable/disable specific capabilities
+  capabilities:
+    pod_management: true
+    deployment_management: true
+    service_management: true
+    configmap_management: true
+    secret_management: false  # Disabled by default for security
+    namespace_management: false  # Disabled by default for safety
+    node_management: false  # Read-only node info only
+
+# Pagination settings
+pagination:
+  default_page_size: 50
+  max_pages: 20
+
+# Resource watching settings (for streaming operations)
+watch:
+  enabled: true
+  timeout_seconds: 300
+  resource_version_match: "NotOlderThan"
+
+# Caching settings
+cache:
+  enabled: true
+  ttl_seconds: 60  # Short TTL for dynamic K8s resources
+
+# Logging configuration
+logging:
+  level: "INFO"
+  format: "%(asctime)s - %(name)s - %(levelname)s - %(message)s"
+  
+  # Log Kubernetes API requests
+  log_k8s_requests: false
+
+# Development settings
+dev:
+  # Enable debug mode
+  debug: false
+  
+  # Use mock responses for testing
+  mock_responses: false
+  
+  # Dry run mode (for write operations)
+  dry_run: false
