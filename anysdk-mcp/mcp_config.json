@@ -1,0 +1,48 @@
+{
+    "mcpServers": {
+        "anysdk-github": {
+            "command": "python",
+            "args": [
+                "/Users/alankritverma/projects/anysdk-mcp/anysdk-mcp/mcp_server.py",
+                "--sdk",
+                "github-auto"
+            ],
+            "env": {
+                "PYTHONPATH": "/Users/alankritverma/projects/anysdk-mcp/anysdk-mcp"
+            }
+        },
+        "anysdk-k8s": {
+            "command": "python",
+            "args": [
+                "/Users/alankritverma/projects/anysdk-mcp/anysdk-mcp/mcp_server.py",
+                "--sdk",
+                "k8s-auto"
+            ],
+            "env": {
+                "PYTHONPATH": "/Users/alankritverma/projects/anysdk-mcp/anysdk-mcp"
+            }
+        },
+        "anysdk-github-curated": {
+            "command": "python",
+            "args": [
+                "/Users/alankritverma/projects/anysdk-mcp/anysdk-mcp/mcp_server.py",
+                "--sdk",
+                "github"
+            ],
+            "env": {
+                "PYTHONPATH": "/Users/alankritverma/projects/anysdk-mcp/anysdk-mcp"
+            }
+        },
+        "anysdk-k8s-curated": {
+            "command": "python",
+            "args": [
+                "/Users/alankritverma/projects/anysdk-mcp/anysdk-mcp/mcp_server.py",
+                "--sdk",
+                "k8s"
+            ],
+            "env": {
+                "PYTHONPATH": "/Users/alankritverma/projects/anysdk-mcp/anysdk-mcp"
+            }
+        }
+    }
+}

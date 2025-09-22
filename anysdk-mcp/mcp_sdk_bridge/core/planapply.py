@@ -1,16 +1,16 @@
 # anysdk-mcp/mcp_sdk_bridge/core/planapply.py
 
 """
-Plan/Apply Pattern Implementation
+Plan/Apply Pattern Module
 
-Provides safe execution of write operations through a two-step plan/apply process.
+Implements the plan/apply pattern for safe execution of write operations.
 """
 
-import json
-import time
 import uuid
-from typing import Any, Dict, Callable, Optional
-from dataclasses import dataclass, asdict
+import time
+from typing import Dict, Any, Optional, Callable
+from dataclasses import dataclass
+from datetime import datetime, timedelta
 
 
 @dataclass
@@ -19,154 +19,194 @@ class ExecutionPlan:
     plan_id: str
     tool_name: str
     args: Dict[str, Any]
-    created_at: float
-    expires_at: float
     risk_level: str
     description: str
-
-
-class PlanExecutionError(Exception):
-    """Raised when plan execution fails"""
-    pass
+    created_at: datetime
+    expires_at: datetime
+    status: str = "pending"  # pending, applied, expired, cancelled
 
 
 class Planner:
-    """
-    Manages the plan/apply lifecycle for write operations.
+    """Manages execution plans for write operations"""
     
-    This provides a safety mechanism where write operations must be:
-    1. Planned first (returns a plan_id and preview)
-    2. Applied later (executes the planned operation)
-    """
+    def __init__(self, default_ttl_minutes: int = 30):
+        self.plans: Dict[str, ExecutionPlan] = {}
+        self.default_ttl_minutes = default_ttl_minutes
     
-    def __init__(self, default_ttl_seconds: int = 600):
-        self.default_ttl_seconds = default_ttl_seconds
-        self._plans: Dict[str, ExecutionPlan] = {}
-    
-    def plan(
-        self, 
-        tool_name: str, 
-        args: Dict[str, Any], 
-        risk_level: str = "medium",
-        description: str = None,
-        ttl_seconds: Optional[int] = None
-    ) -> Dict[str, Any]:
-        """
-        Create an execution plan for a write operation.
-        
-        Args:
-            tool_name: Name of the tool/method to execute
-            args: Arguments to pass to the tool
-            risk_level: Risk level (low/medium/high)
-            description: Human-readable description of the operation
-            ttl_seconds: Time-to-live for the plan (default: 600s)
-            
-        Returns:
-            Plan details including plan_id and preview
-        """
+    def plan(self, 
+             tool_name: str, 
+             args: Dict[str, Any], 
+             risk_level: str,
+             description: str = None,
+             ttl_minutes: int = None) -> Dict[str, Any]:
+        """Create an execution plan"""
         plan_id = str(uuid.uuid4())
-        now = time.time()
-        ttl = ttl_seconds or self.default_ttl_seconds
+        ttl = ttl_minutes or self.default_ttl_minutes
+        
+        now = datetime.utcnow()
+        expires_at = now + timedelta(minutes=ttl)
         
         plan = ExecutionPlan(
             plan_id=plan_id,
             tool_name=tool_name,
             args=args,
-            created_at=now,
-            expires_at=now + ttl,
             risk_level=risk_level,
-            description=description or f"Execute {tool_name}"
+            description=description or f"Execute {tool_name}",
+            created_at=now,
+            expires_at=expires_at
         )
         
-        self._plans[plan_id] = plan
+        self.plans[plan_id] = plan
         
         # Clean up expired plans
         self._cleanup_expired_plans()
         
         return {
             "plan_id": plan_id,
-            "preview": {
-                "tool": tool_name,
-                "args": args,
-                "risk_level": risk_level,
-                "description": plan.description,
-                "arg_summary": ", ".join(f"{k}={repr(v)[:80]}" for k, v in args.items())
-            },
-            "expires_in_seconds": int(ttl),
-            "expires_at": plan.expires_at
+            "tool_name": tool_name,
+            "args": args,
+            "risk_level": risk_level,
+            "description": plan.description,
+            "expires_at": expires_at.isoformat(),
+            "ttl_minutes": ttl,
+            "status": "pending",
+            "instructions": f"To execute this plan, call {tool_name}.apply with plan_id: {plan_id}"
         }
     
-    def apply(self, plan_id: str, executor: Callable[[], Any]) -> Any:
-        """
-        Apply a previously created execution plan.
-        
-        Args:
-            plan_id: The plan ID returned from plan()
-            executor: Function that executes the planned operation
-            
-        Returns:
-            Result of the executed operation
-            
-        Raises:
-            PlanExecutionError: If plan is invalid, expired, or execution fails
-        """
-        # Clean up expired plans first
+    def get_plan(self, plan_id: str) -> Optional[ExecutionPlan]:
+        """Get a plan by ID"""
         self._cleanup_expired_plans()
+        return self.plans.get(plan_id)
+    
+    def apply(self, plan_id: str, executor: Callable[[], Any]) -> Dict[str, Any]:
+        """Apply a planned operation"""
+        plan = self.get_plan(plan_id)
         
-        if plan_id not in self._plans:
-            raise PlanExecutionError(f"Unknown or expired plan_id: {plan_id}")
-        
-        plan = self._plans.pop(plan_id)  # Remove plan after retrieval (single use)
-        
-        # Double-check expiration
-        if time.time() > plan.expires_at:
-            raise PlanExecutionError(f"Plan {plan_id} has expired")
-        
-        try:
-            result = executor()
+        if not plan:
             return {
-                "success": True,
-                "result": result,
-                "executed_plan": {
-                    "tool": plan.tool_name,
-                    "args": plan.args,
-                    "executed_at": time.time()
+                "error": {
+                    "type": "PlanNotFound",
+                    "message": f"Plan {plan_id} not found or expired",
+                    "plan_id": plan_id
                 }
             }
+        
+        if plan.status != "pending":
+            return {
+                "error": {
+                    "type": "PlanAlreadyApplied",
+                    "message": f"Plan {plan_id} has already been {plan.status}",
+                    "plan_id": plan_id,
+                    "status": plan.status
+                }
+            }
+        
+        try:
+            # Execute the planned operation
+            result = executor()
+            
+            # Mark plan as applied and remove it
+            plan.status = "applied"
+            del self.plans[plan_id]
+            
+            return {
+                "plan_id": plan_id,
+                "status": "applied",
+                "tool_name": plan.tool_name,
+                "applied_at": datetime.utcnow().isoformat(),
+                "result": result
+            }
+            
         except Exception as e:
-            raise PlanExecutionError(f"Plan execution failed: {str(e)}") from e
+            # Mark plan as failed but keep it for debugging
+            plan.status = "failed"
+            
+            return {
+                "error": {
+                    "type": "ExecutionFailed",
+                    "message": str(e),
+                    "plan_id": plan_id,
+                    "tool_name": plan.tool_name
+                }
+            }
     
-    def get_plan(self, plan_id: str) -> Optional[ExecutionPlan]:
-        """Get plan details without consuming it"""
+    def cancel_plan(self, plan_id: str) -> Dict[str, Any]:
+        """Cancel a pending plan"""
+        plan = self.get_plan(plan_id)
+        
+        if not plan:
+            return {
+                "error": {
+                    "type": "PlanNotFound", 
+                    "message": f"Plan {plan_id} not found or expired"
+                }
+            }
+        
+        if plan.status != "pending":
+            return {
+                "error": {
+                    "type": "PlanNotPending",
+                    "message": f"Plan {plan_id} cannot be cancelled (status: {plan.status})"
+                }
+            }
+        
+        plan.status = "cancelled"
+        del self.plans[plan_id]
+        
+        return {
+            "plan_id": plan_id,
+            "status": "cancelled",
+            "cancelled_at": datetime.utcnow().isoformat()
+        }
+    
+    def list_plans(self, include_completed: bool = False) -> Dict[str, Any]:
+        """List all plans"""
         self._cleanup_expired_plans()
-        return self._plans.get(plan_id)
-    
-    def list_plans(self) -> Dict[str, ExecutionPlan]:
-        """List all active plans"""
-        self._cleanup_expired_plans()
-        return self._plans.copy()
-    
-    def cancel_plan(self, plan_id: str) -> bool:
-        """Cancel a plan"""
-        return self._plans.pop(plan_id, None) is not None
+        
+        plans = []
+        for plan in self.plans.values():
+            if not include_completed and plan.status != "pending":
+                continue
+                
+            plans.append({
+                "plan_id": plan.plan_id,
+                "tool_name": plan.tool_name,
+                "risk_level": plan.risk_level,
+                "description": plan.description,
+                "status": plan.status,
+                "created_at": plan.created_at.isoformat(),
+                "expires_at": plan.expires_at.isoformat()
+            })
+        
+        return {
+            "plans": plans,
+            "total": len(plans),
+            "pending": len([p for p in plans if p["status"] == "pending"])
+        }
     
     def _cleanup_expired_plans(self):
         """Remove expired plans"""
-        now = time.time()
-        expired_ids = [
-            plan_id for plan_id, plan in self._plans.items()
-            if now > plan.expires_at
-        ]
+        now = datetime.utcnow()
+        expired_ids = []
+        
+        for plan_id, plan in self.plans.items():
+            if now > plan.expires_at and plan.status == "pending":
+                plan.status = "expired"
+                expired_ids.append(plan_id)
+        
         for plan_id in expired_ids:
-            del self._plans[plan_id]
+            del self.plans[plan_id]
     
     def get_stats(self) -> Dict[str, Any]:
         """Get planner statistics"""
         self._cleanup_expired_plans()
+        
+        status_counts = {}
+        for plan in self.plans.values():
+            status_counts[plan.status] = status_counts.get(plan.status, 0) + 1
+        
         return {
-            "active_plans": len(self._plans),
-            "plans_by_risk": {
-                risk: sum(1 for p in self._plans.values() if p.risk_level == risk)
-                for risk in ["low", "medium", "high"]
-            }
+            "total_plans": len(self.plans),
+            "status_breakdown": status_counts,
+            "default_ttl_minutes": self.default_ttl_minutes
         }

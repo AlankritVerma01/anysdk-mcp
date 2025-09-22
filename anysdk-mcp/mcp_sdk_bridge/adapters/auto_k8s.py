@@ -1,253 +1,249 @@
 # anysdk-mcp/mcp_sdk_bridge/adapters/auto_k8s.py
 
 """
-Adapterless Kubernetes SDK Adapter
+Auto-Discovery Kubernetes Adapter
 
-Automatically discovers and exposes all Kubernetes client API methods through reflection.
-This provides comprehensive coverage of the Kubernetes API without manual curation.
+Automatically discovers all Kubernetes API methods using reflection.
 """
 
-import inspect
 import os
-from typing import List, Dict, Any, Optional, Union
+from typing import List, Dict, Any, Optional
 from dataclasses import dataclass
 
-from ..core.discover import SDKMethod, SDKCapability
+from ..core.discover import SDKDiscoverer, SDKMethod, SDKCapability
 from ..core.schema import SchemaGenerator, MCPToolSchema
-from ..core.wrap import SDKWrapper
 from ..core.serialize import ResponseSerializer
-from ..core.classify import classify_method, get_operation_risk_level
 
 
 @dataclass
 class K8sAutoConfig:
-    """Configuration for adapterless Kubernetes adapter"""
+    """Configuration for auto K8s adapter"""
     kubeconfig_path: Optional[str] = None
     context: Optional[str] = None
     namespace: str = "default"
+    max_methods: int = 100  # K8s has many APIs
+    include_apis: List[str] = None  # Which API classes to include
+    exclude_methods: List[str] = None  # Method patterns to exclude
 
 
 class K8sAutoAdapter:
-    """
-    Adapterless Kubernetes adapter that automatically discovers and exposes
-    all methods from kubernetes.client.*Api classes.
-    """
+    """Auto-discovery Kubernetes adapter"""
     
-    def __init__(self, config: K8sAutoConfig = None):
-        self.config = config or K8sAutoConfig()
-        self.serializer = ResponseSerializer()
+    def __init__(self, config: K8sAutoConfig):
+        self.config = config
+        self.discoverer = SDKDiscoverer("k8s")
         self.schema_generator = SchemaGenerator()
-        self.wrapper = SDKWrapper()
-        self.clients: List[tuple[str, Any]] = []
-        self._k8s_available = False
+        self.serializer = ResponseSerializer()
+        self.api_clients = {}
+        self.discovered_methods: List[SDKMethod] = []
         
-        self._setup_clients()
+        self._setup_k8s()
+        self._discover_methods()
     
-    def _setup_clients(self):
-        """Setup Kubernetes clients by reflecting all *Api classes"""
+    def _setup_k8s(self):
+        """Setup Kubernetes clients"""
         try:
-            # Import kubernetes client
-            from kubernetes import client as k8s_client, config as k8s_config
+            from kubernetes import client, config as k8s_config
             
-            # Configure kubernetes client
+            # Load kubeconfig
             if self.config.kubeconfig_path:
                 k8s_config.load_kube_config(
-                    config_file=os.path.expanduser(self.config.kubeconfig_path), 
+                    config_file=os.path.expanduser(self.config.kubeconfig_path),
                     context=self.config.context
                 )
             else:
                 try:
                     k8s_config.load_kube_config(context=self.config.context)
                 except Exception:
-                    # Fallback to in-cluster config
-                    k8s_config.load_incluster_config()
+                    print("⚠️  No kubeconfig found, will discover methods but calls may fail")
             
-            # Discover all *Api classes
-            for name, cls in inspect.getmembers(k8s_client, inspect.isclass):
-                if name.endswith("Api") and hasattr(cls, "__init__"):
-                    try:
-                        # Instantiate the API client
-                        client_instance = cls()
-                        self.clients.append((f"k8s.{name}", client_instance))
-                    except Exception as e:
-                        # Skip clients that fail to instantiate
-                        print(f"Warning: Failed to instantiate {name}: {e}")
-                        continue
+            # Initialize common API clients
+            self.api_clients = {
+                "CoreV1Api": client.CoreV1Api(),
+                "AppsV1Api": client.AppsV1Api(),
+                "NetworkingV1Api": client.NetworkingV1Api(),
+                "RbacAuthorizationV1Api": client.RbacAuthorizationV1Api(),
+                "StorageV1Api": client.StorageV1Api(),
+            }
             
-            self._k8s_available = True
-            print(f"✅ K8s Auto Adapter: Discovered {len(self.clients)} API clients")
+            print(f"✅ Kubernetes clients initialized for {len(self.api_clients)} APIs")
             
         except ImportError:
-            print("Warning: kubernetes package not installed. K8s auto adapter will use mock data.")
-            self._k8s_available = False
+            print("❌ kubernetes package not installed. Install with: pip install kubernetes")
+            self.api_clients = {}
         except Exception as e:
-            print(f"Warning: Failed to setup K8s clients: {e}. Discovery will work but calls may fail.")
-            # Still allow discovery without a working cluster
+            print(f"⚠️  Kubernetes setup warning: {e}")
+            # Still try to initialize clients for discovery
             try:
-                from kubernetes import client as k8s_client
-                for name, cls in inspect.getmembers(k8s_client, inspect.isclass):
-                    if name.endswith("Api"):
-                        self.clients.append((f"k8s.{name}", None))  # None indicates no instance
-            except ImportError:
-                pass
+                from kubernetes import client
+                self.api_clients = {
+                    "CoreV1Api": client.CoreV1Api(),
+                    "AppsV1Api": client.AppsV1Api(),
+                }
+            except Exception:
+                self.api_clients = {}
+    
+    def _discover_methods(self):
+        """Discover Kubernetes API methods"""
+        if not self.api_clients:
+            print("⚠️  No K8s clients available for discovery")
+            return
+        
+        print(f"🔍 Auto-discovering Kubernetes API methods...")
+        
+        all_methods = []
+        
+        # Discover methods from each API client
+        for api_name, api_client in self.api_clients.items():
+            if self.config.include_apis and api_name not in self.config.include_apis:
+                continue
+                
+            methods = self.discoverer.discover_client_methods(api_client, f"k8s.{api_name}")
+            
+            # Filter methods
+            filtered_methods = []
+            for method in methods:
+                if self._should_include_method(method.name, api_name):
+                    # Prefix with API name for clarity
+                    method.name = f"{api_name}_{method.name}"
+                    filtered_methods.append(method)
+            
+            all_methods.extend(filtered_methods)
+            print(f"   {api_name}: {len(filtered_methods)} methods")
+        
+        # Limit total methods
+        self.discovered_methods = all_methods[:self.config.max_methods]
+        
+        print(f"📊 Discovered {len(self.discovered_methods)} K8s methods total")
+    
+    def _should_include_method(self, method_name: str, api_name: str) -> bool:
+        """Check if method should be included"""
+        # Skip private methods
+        if method_name.startswith("_"):
+            return False
+        
+        # Skip some complex/dangerous methods
+        skip_patterns = [
+            "api_client", "sanitize_for_serialization", "deserialize",
+            "call_api", "update_params_for_auth", "files_parameters",
+            "select_header_accept", "select_header_content_type"
+        ]
+        
+        for pattern in skip_patterns:
+            if pattern in method_name:
+                return False
+        
+        # Exclude patterns from config
+        if self.config.exclude_methods:
+            for pattern in self.config.exclude_methods:
+                if pattern in method_name:
+                    return False
+        
+        return True
     
     def discover_capabilities(self) -> List[SDKCapability]:
-        """Discover all Kubernetes API capabilities by reflecting client methods"""
-        capabilities = []
-        
-        for client_name, client_instance in self.clients:
-            methods = []
-            
-            # Get all public methods from the client class (not instance, to avoid connection issues)
-            client_class = type(client_instance) if client_instance else None
-            if not client_class:
-                continue
-                
-            for method_name, method in inspect.getmembers(client_class, predicate=inspect.isfunction):
-                if method_name.startswith("_"):
-                    continue
-                
-                try:
-                    # Get method signature
-                    sig = inspect.signature(method)
-                    doc = inspect.getdoc(method) or f"{client_name}.{method_name}"
-                    
-                    # Build parameters dict
-                    parameters = {}
-                    for param_name, param in sig.parameters.items():
-                        if param_name == "self":
-                            continue
-                        
-                        param_type = "Any"
-                        if param.annotation != inspect.Parameter.empty:
-                            param_type = getattr(param.annotation, "__name__", str(param.annotation))
-                        
-                        parameters[param_name] = {
-                            "type": param_type,
-                            "default": param.default if param.default != inspect.Parameter.empty else None,
-                            "required": param.default == inspect.Parameter.empty,
-                            "description": f"Parameter {param_name} for {method_name}"
-                        }
-                    
-                    # Create SDK method
-                    sdk_method = SDKMethod(
-                        name=f"{client_name}.{method_name}",
-                        description=doc,
-                        parameters=parameters,
-                        return_type="Any",
-                        module_path="kubernetes.client",
-                        is_async=False
-                    )
-                    methods.append(sdk_method)
-                    
-                except Exception as e:
-                    print(f"Warning: Failed to analyze method {client_name}.{method_name}: {e}")
-                    continue
-            
-            if methods:
-                capability = SDKCapability(
-                    name=f"{client_name.lower()}_operations",
-                    description=f"Auto-discovered operations for {client_name}",
-                    methods=methods,
-                    requires_auth=True
-                )
-                capabilities.append(capability)
-        
-        return capabilities
+        """Return discovered capabilities"""
+        return [SDKCapability(
+            name="k8s_auto",
+            description="Auto-discovered Kubernetes API methods",
+            methods=self.discovered_methods,
+            requires_auth=True  # K8s requires cluster access
+        )]
     
     def generate_mcp_tools(self) -> List[MCPToolSchema]:
-        """Generate MCP tool schemas for all discovered methods"""
-        schemas = []
-        
-        for capability in self.discover_capabilities():
-            for method in capability.methods:
-                try:
-                    # Generate base schema
-                    schema = self.schema_generator.generate_tool_schema(method)
-                    
-                    # Override name to use full qualified name
-                    schema.name = method.name
-                    
-                    # Add operation type and risk level as metadata
-                    op_type = classify_method(method.name.split(".")[-1])  # Get method name without class prefix
-                    risk_level = get_operation_risk_level(method.name.split(".")[-1])
-                    
-                    # Add metadata to description
-                    schema.description = f"{schema.description} [Operation: {op_type}, Risk: {risk_level}]"
-                    
-                    schemas.append(schema)
-                    
-                except Exception as e:
-                    print(f"Warning: Failed to generate schema for {method.name}: {e}")
-                    continue
-        
-        return schemas
+        """Generate MCP tool schemas"""
+        tools = []
+        for method in self.discovered_methods:
+            schema = self.schema_generator.generate_tool_schema(method)
+            tools.append(schema)
+        return tools
     
     def create_tool_implementations(self) -> Dict[str, callable]:
-        """Create callable implementations for all discovered methods"""
+        """Create tool implementations"""
         implementations = {}
         
-        for client_name, client_instance in self.clients:
-            if not client_instance:
-                continue
-                
-            for method_name, method in inspect.getmembers(client_instance, predicate=inspect.ismethod):
-                if method_name.startswith("_"):
-                    continue
-                
-                full_name = f"{client_name}.{method_name}"
-                
-                # Create implementation with proper closure
-                def make_implementation(target_method=method, tool_name=full_name):
-                    def implementation(**kwargs):
-                        try:
-                            # Execute the Kubernetes API call
-                            result = target_method(**kwargs)
-                            
-                            # Serialize the response
-                            return self.serializer.serialize_response(result)
-                            
-                        except Exception as e:
-                            # Serialize the error with context
-                            return self.serializer.serialize_error(e, {
-                                "method": tool_name,
-                                "args": kwargs,
-                                "kubernetes_context": self.config.context,
-                                "namespace": self.config.namespace
-                            })
-                    
-                    return implementation
-                
-                implementations[full_name] = make_implementation()
+        for method in self.discovered_methods:
+            tool_name = f"k8s.{method.name}"
+            implementations[tool_name] = self._create_method_wrapper(method)
         
         return implementations
     
+    def _create_method_wrapper(self, method: SDKMethod):
+        """Create a wrapper for a discovered method"""
+        def wrapper(**kwargs):
+            try:
+                # Extract API name from method name
+                api_name = method.name.split("_")[0]  # e.g., "CoreV1Api_list_pod" -> "CoreV1Api"
+                actual_method_name = "_".join(method.name.split("_")[1:])  # -> "list_pod"
+                
+                api_client = self.api_clients.get(api_name)
+                if not api_client:
+                    return self.serializer.serialize_error(
+                        Exception(f"API client {api_name} not available"),
+                        {"method": method.name}
+                    )
+                
+                # Get the actual method
+                k8s_method = getattr(api_client, actual_method_name, None)
+                if not k8s_method:
+                    return self.serializer.serialize_error(
+                        AttributeError(f"Method {actual_method_name} not found on {api_name}"),
+                        {"method": method.name}
+                    )
+                
+                # Filter kwargs to only include valid parameters
+                filtered_kwargs = {}
+                for param_name, param_info in method.parameters.items():
+                    if param_name in kwargs:
+                        filtered_kwargs[param_name] = kwargs[param_name]
+                
+                # Add default namespace if needed and not provided
+                if "namespace" in method.parameters and "namespace" not in filtered_kwargs:
+                    if "namespaced" in actual_method_name:
+                        filtered_kwargs["namespace"] = self.config.namespace
+                
+                # Call the method
+                result = k8s_method(**filtered_kwargs)
+                
+                # Handle K8s response objects
+                if hasattr(result, 'to_dict'):
+                    result = result.to_dict()
+                elif hasattr(result, 'items'):
+                    # List response
+                    items = []
+                    for item in result.items[:50]:  # Limit items
+                        if hasattr(item, 'to_dict'):
+                            items.append(item.to_dict())
+                        else:
+                            items.append(str(item))
+                    result = {
+                        "items": items,
+                        "metadata": result.metadata.to_dict() if hasattr(result.metadata, 'to_dict') else str(result.metadata)
+                    }
+                
+                return self.serializer.serialize_response(result)
+                
+            except Exception as e:
+                return self.serializer.serialize_error(e, {
+                    "method": method.name,
+                    "args": kwargs
+                })
+        
+        return wrapper
+    
     def get_stats(self) -> Dict[str, Any]:
         """Get adapter statistics"""
-        capabilities = self.discover_capabilities()
-        total_methods = sum(len(cap.methods) for cap in capabilities)
-        
-        # Count by operation type
-        read_count = 0
-        write_count = 0
-        
-        for cap in capabilities:
-            for method in cap.methods:
-                method_name = method.name.split(".")[-1]
-                op_type = classify_method(method_name)
-                if op_type == "read":
-                    read_count += 1
-                else:
-                    write_count += 1
+        api_stats = {}
+        for api_name in self.api_clients.keys():
+            count = len([m for m in self.discovered_methods if m.name.startswith(api_name)])
+            api_stats[api_name] = count
         
         return {
-            "adapter_type": "adapterless",
+            "adapter_type": "adapterless", 
             "sdk": "kubernetes",
-            "available": self._k8s_available,
-            "api_clients": len(self.clients),
-            "total_methods": total_methods,
-            "read_operations": read_count,
-            "write_operations": write_count,
-            "capabilities": len(capabilities)
+            "methods_discovered": len(self.discovered_methods),
+            "api_clients": list(self.api_clients.keys()),
+            "methods_per_api": api_stats,
+            "max_methods_limit": self.config.max_methods,
+            "default_namespace": self.config.namespace
         }
-

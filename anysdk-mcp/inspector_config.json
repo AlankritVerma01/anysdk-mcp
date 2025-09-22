@@ -1,0 +1,56 @@
+{
+    "servers": [
+        {
+            "name": "GitHub Auto-Discovery",
+            "description": "Auto-discovered GitHub API methods (~50 tools)",
+            "command": "python",
+            "args": [
+                "/Users/alankritverma/projects/anysdk-mcp/anysdk-mcp/mcp_server.py",
+                "--sdk",
+                "github-auto"
+            ],
+            "env": {
+                "PYTHONPATH": "/Users/alankritverma/projects/anysdk-mcp/anysdk-mcp"
+            }
+        },
+        {
+            "name": "Kubernetes Auto-Discovery",
+            "description": "Auto-discovered Kubernetes API methods (~100 tools)",
+            "command": "python",
+            "args": [
+                "/Users/alankritverma/projects/anysdk-mcp/anysdk-mcp/mcp_server.py",
+                "--sdk",
+                "k8s-auto"
+            ],
+            "env": {
+                "PYTHONPATH": "/Users/alankritverma/projects/anysdk-mcp/anysdk-mcp"
+            }
+        },
+        {
+            "name": "GitHub Curated",
+            "description": "Hand-selected GitHub operations (repos, issues, PRs)",
+            "command": "python",
+            "args": [
+                "/Users/alankritverma/projects/anysdk-mcp/anysdk-mcp/mcp_server.py",
+                "--sdk",
+                "github"
+            ],
+            "env": {
+                "PYTHONPATH": "/Users/alankritverma/projects/anysdk-mcp/anysdk-mcp"
+            }
+        },
+        {
+            "name": "Kubernetes Curated",
+            "description": "Hand-selected K8s operations (pods, deployments, services)",
+            "command": "python",
+            "args": [
+                "/Users/alankritverma/projects/anysdk-mcp/anysdk-mcp/mcp_server.py",
+                "--sdk",
+                "k8s"
+            ],
+            "env": {
+                "PYTHONPATH": "/Users/alankritverma/projects/anysdk-mcp/anysdk-mcp"
+            }
+        }
+    ]
+}
