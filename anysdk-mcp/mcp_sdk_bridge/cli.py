@@ -13,6 +13,7 @@ import yaml
 from pathlib import Path
 from typing import Dict, Any, Optional
 import asyncio
+from datetime import datetime
 
 from mcp.server.fastmcp import FastMCP
 # Lazy imports inside setup_adapter to avoid hard deps on curated adapters
@@ -130,8 +131,15 @@ class MCPBridgeServer:
             op_type = classify_method(actual_method)
             risk_level = get_operation_risk_level(actual_method)
             
-            # Wrap with safety controls
-            safe_impl = self.safety.safe_wrap(implementation, method_name=tool_name)
+            # Wrap with safety controls and inject default security context for auto-adapters
+            def with_default_context(fn):
+                """Inject default security context for local development"""
+                def _wrapped(**kwargs):
+                    from .core.safety import SecurityContext
+                    return fn(_security_context=SecurityContext(user_id="local-dev"), **kwargs)
+                return _wrapped
+            
+            safe_impl = with_default_context(self.safety.safe_wrap(implementation, method_name=tool_name))
             
             if op_type == "write":
                 write_count += 1
@@ -154,10 +162,14 @@ class MCPBridgeServer:
                         
                         # Execute the implementation (handling both sync and async)
                         try:
+                            # Inject security context for plan execution
+                            from .core.safety import SecurityContext
+                            plan_args = {**plan.args, '_security_context': SecurityContext(user_id="local-dev")}
+                            
                             if asyncio.iscoroutinefunction(impl):
-                                result = await impl(**plan.args)
+                                result = await impl(**plan_args)
                             else:
-                                result = await asyncio.to_thread(impl, **plan.args)
+                                result = await asyncio.to_thread(impl, **plan_args)
                             
                             # Apply the plan with the result
                             return self.planner.apply(plan_id, lambda: result)
@@ -188,6 +200,12 @@ class MCPBridgeServer:
                 )(safe_impl)
                 registered += 1
         
+        # Register LRO management tools
+        self._register_lro_tools()
+        
+        # Register meta tools for discovery and introspection
+        self._register_meta_tools()
+        
         # Print comprehensive stats on boot
         print(f"🔧 Registered {registered} tools for {self.sdk_name}")
         print(f"   📖 Read operations: {read_count}")
@@ -196,6 +214,274 @@ class MCPBridgeServer:
         if hasattr(self.adapter, "get_stats"):
             stats = self.adapter.get_stats()
             print("📊 Adapter stats:", stats)
+    
+    def _register_lro_tools(self):
+        """Register Long Running Operation management tools"""
+        
+        @self.mcp.tool(
+            name="lro.get_status",
+            description="Get status of a long running operation"
+        )
+        def lro_get_status(operation_id: str):
+            """Get the status of a long running operation"""
+            try:
+                status = self.lro.get_operation_status(operation_id)
+                return {
+                    "operation_id": operation_id,
+                    "status": status.status.value,
+                    "progress": status.progress,
+                    "result": status.result,
+                    "error": status.error,
+                    "started_at": status.started_at.isoformat() if status.started_at else None,
+                    "completed_at": status.completed_at.isoformat() if status.completed_at else None
+                }
+            except Exception as e:
+                return {
+                    "error": f"Operation {operation_id} not found or error: {str(e)}",
+                    "operation_id": operation_id
+                }
+        
+        @self.mcp.tool(
+            name="lro.wait",
+            description="Wait for a long running operation to complete"
+        )
+        async def lro_wait(operation_id: str, timeout_seconds: int = 300):
+            """Wait for a long running operation to complete"""
+            try:
+                result = await self.lro.wait_for_completion(operation_id, timeout_seconds)
+                return {
+                    "operation_id": operation_id,
+                    "status": "completed",
+                    "result": result.result,
+                    "completed_at": result.completed_at.isoformat() if result.completed_at else None
+                }
+            except TimeoutError:
+                return {
+                    "error": f"Operation {operation_id} timed out after {timeout_seconds} seconds",
+                    "operation_id": operation_id,
+                    "status": "timeout"
+                }
+            except Exception as e:
+                return {
+                    "error": f"Error waiting for operation {operation_id}: {str(e)}",
+                    "operation_id": operation_id,
+                    "status": "error"
+                }
+        
+        @self.mcp.tool(
+            name="lro.list_operations", 
+            description="List all active long running operations"
+        )
+        def lro_list_operations():
+            """List all tracked long running operations"""
+            try:
+                operations = self.lro.list_operations()
+                return {
+                    "operations": [
+                        {
+                            "operation_id": op_id,
+                            "status": op.status.value,
+                            "progress": op.progress,
+                            "started_at": op.started_at.isoformat() if op.started_at else None
+                        }
+                        for op_id, op in operations.items()
+                    ],
+                    "total_count": len(operations)
+                }
+            except Exception as e:
+                return {
+                    "error": f"Error listing operations: {str(e)}",
+                    "operations": []
+                }
+    
+    def _register_meta_tools(self):
+        """Register meta tools for discovery and introspection"""
+        
+        @self.mcp.tool(
+            name="tools.search",
+            description="Search for tools by name or description"
+        )
+        def tools_search(query: str, limit: int = 10):
+            """Search for tools matching the query"""
+            try:
+                # Get all tool implementations and schemas
+                implementations = self.adapter.create_tool_implementations()
+                schemas = {s.name: s for s in self.adapter.generate_mcp_tools()}
+                
+                results = []
+                query_lower = query.lower()
+                
+                for tool_name in implementations.keys():
+                    schema = schemas.get(tool_name)
+                    if not schema:
+                        continue
+                    
+                    # Search in name and description
+                    name_match = query_lower in tool_name.lower()
+                    desc_match = query_lower in schema.description.lower()
+                    
+                    if name_match or desc_match:
+                        results.append({
+                            "name": tool_name,
+                            "description": schema.description,
+                            "match_type": "name" if name_match else "description",
+                            "input_schema": schema.inputSchema
+                        })
+                
+                # Sort by relevance (name matches first, then description matches)
+                results.sort(key=lambda x: (x["match_type"] != "name", x["name"]))
+                
+                return {
+                    "query": query,
+                    "results": results[:limit],
+                    "total_matches": len(results),
+                    "showing": min(len(results), limit)
+                }
+            except Exception as e:
+                return {
+                    "error": f"Error searching tools: {str(e)}",
+                    "query": query,
+                    "results": []
+                }
+        
+        @self.mcp.tool(
+            name="meta.stats",
+            description="Get comprehensive statistics about available tools"
+        )
+        def meta_stats():
+            """Get statistics about the SDK adapter and available tools"""
+            try:
+                # Get adapter stats
+                adapter_stats = self.adapter.get_stats() if hasattr(self.adapter, "get_stats") else {}
+                
+                # Get tool counts by type
+                implementations = self.adapter.create_tool_implementations()
+                schemas = {s.name: s for s in self.adapter.generate_mcp_tools()}
+                
+                read_tools = []
+                write_tools = []
+                lro_tools = []
+                plan_tools = []
+                apply_tools = []
+                
+                for tool_name in implementations.keys():
+                    if tool_name.endswith('.plan'):
+                        plan_tools.append(tool_name)
+                    elif tool_name.endswith('.apply'):
+                        apply_tools.append(tool_name)
+                    elif 'begin_' in tool_name or tool_name.startswith('lro.'):
+                        lro_tools.append(tool_name)
+                    elif any(verb in tool_name.lower() for verb in ['create', 'delete', 'update', 'set', 'add', 'remove']):
+                        write_tools.append(tool_name)
+                    else:
+                        read_tools.append(tool_name)
+                
+                return {
+                    "sdk": self.sdk_name,
+                    "adapter_stats": adapter_stats,
+                    "tool_counts": {
+                        "total": len(implementations),
+                        "read": len(read_tools),
+                        "write": len(write_tools),
+                        "lro": len(lro_tools),
+                        "plan": len(plan_tools),
+                        "apply": len(apply_tools)
+                    },
+                    "tool_breakdown": {
+                        "read_tools": read_tools[:10],  # Show first 10
+                        "write_tools": write_tools[:10],
+                        "lro_tools": lro_tools[:10]
+                    }
+                }
+            except Exception as e:
+                return {
+                    "error": f"Error getting stats: {str(e)}",
+                    "sdk": self.sdk_name
+                }
+        
+        @self.mcp.tool(
+            name="meta.export_tools",
+            description="Export tool catalog in JSON or Markdown format"
+        )
+        def meta_export_tools(format: str = "json", include_schemas: bool = True):
+            """Export a comprehensive catalog of all available tools"""
+            try:
+                implementations = self.adapter.create_tool_implementations()
+                schemas = {s.name: s for s in self.adapter.generate_mcp_tools()}
+                
+                catalog = {
+                    "sdk": self.sdk_name,
+                    "generated_at": datetime.now().isoformat(),
+                    "total_tools": len(implementations),
+                    "tools": []
+                }
+                
+                for tool_name in sorted(implementations.keys()):
+                    schema = schemas.get(tool_name)
+                    tool_info = {
+                        "name": tool_name,
+                        "description": schema.description if schema else "No description available"
+                    }
+                    
+                    if include_schemas and schema:
+                        tool_info["input_schema"] = schema.inputSchema
+                    
+                    # Add classification info
+                    if tool_name.endswith('.plan'):
+                        tool_info["type"] = "plan"
+                    elif tool_name.endswith('.apply'):
+                        tool_info["type"] = "apply"
+                    elif 'begin_' in tool_name:
+                        tool_info["type"] = "lro"
+                    elif any(verb in tool_name.lower() for verb in ['create', 'delete', 'update', 'set']):
+                        tool_info["type"] = "write"
+                    else:
+                        tool_info["type"] = "read"
+                    
+                    catalog["tools"].append(tool_info)
+                
+                if format.lower() == "markdown":
+                    # Generate Markdown format
+                    md_lines = [
+                        f"# {self.sdk_name.title()} SDK Tools Catalog",
+                        f"",
+                        f"Generated: {catalog['generated_at']}",
+                        f"Total Tools: {catalog['total_tools']}",
+                        f"",
+                        f"## Tools by Type",
+                        f""
+                    ]
+                    
+                    # Group by type
+                    by_type = {}
+                    for tool in catalog["tools"]:
+                        tool_type = tool["type"]
+                        if tool_type not in by_type:
+                            by_type[tool_type] = []
+                        by_type[tool_type].append(tool)
+                    
+                    for tool_type, tools in sorted(by_type.items()):
+                        md_lines.append(f"### {tool_type.title()} Operations ({len(tools)})")
+                        md_lines.append("")
+                        for tool in tools:
+                            md_lines.append(f"- **{tool['name']}**: {tool['description']}")
+                        md_lines.append("")
+                    
+                    return {
+                        "format": "markdown",
+                        "content": "\n".join(md_lines)
+                    }
+                else:
+                    return {
+                        "format": "json", 
+                        "content": catalog
+                    }
+                    
+            except Exception as e:
+                return {
+                    "error": f"Error exporting tools: {str(e)}",
+                    "format": format
+                }
     
     def run(self):
         """Run the MCP server"""
