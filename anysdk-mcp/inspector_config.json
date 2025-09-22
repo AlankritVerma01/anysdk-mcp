@@ -2,68 +2,54 @@
     "servers": [
         {
             "name": "GitHub Auto-Discovery",
-            "description": "Auto-discovered GitHub API methods (~50 tools)",
-            "command": "python",
+            "description": "Auto-discovered GitHub API methods (~50 tools) with LLM enrichment",
+            "command": "uv",
             "args": [
+                "run",
+                "python",
                 "/Users/alankritverma/projects/anysdk-mcp/anysdk-mcp/mcp_server.py",
                 "--sdk",
-                "github-auto"
+                "github-auto",
+                "--debug"
             ],
             "env": {
                 "PYTHONPATH": "/Users/alankritverma/projects/anysdk-mcp/anysdk-mcp"
-            }
-        },
-        {
-            "name": "Kubernetes Auto-Discovery",
-            "description": "Auto-discovered Kubernetes API methods (~100 tools)",
-            "command": "python",
-            "args": [
-                "/Users/alankritverma/projects/anysdk-mcp/anysdk-mcp/mcp_server.py",
-                "--sdk",
-                "k8s-auto"
-            ],
-            "env": {
-                "PYTHONPATH": "/Users/alankritverma/projects/anysdk-mcp/anysdk-mcp"
-            }
+            },
+            "cwd": "/Users/alankritverma/projects/anysdk-mcp/anysdk-mcp"
         },
         {
             "name": "Azure Auto-Discovery",
             "description": "Auto-discovered Azure Management SDK operations (~200+ tools)",
-            "command": "python",
+            "command": "uv",
             "args": [
+                "run",
+                "python",
                 "/Users/alankritverma/projects/anysdk-mcp/anysdk-mcp/mcp_server.py",
                 "--sdk",
-                "azure-auto"
+                "azure-auto",
+                "--debug"
             ],
             "env": {
                 "PYTHONPATH": "/Users/alankritverma/projects/anysdk-mcp/anysdk-mcp"
-            }
+            },
+            "cwd": "/Users/alankritverma/projects/anysdk-mcp/anysdk-mcp"
         },
         {
-            "name": "GitHub Curated",
-            "description": "Hand-selected GitHub operations (repos, issues, PRs)",
-            "command": "python",
+            "name": "Kubernetes Auto-Discovery",
+            "description": "Auto-discovered Kubernetes API methods (~100 tools)",
+            "command": "uv",
             "args": [
+                "run",
+                "python",
                 "/Users/alankritverma/projects/anysdk-mcp/anysdk-mcp/mcp_server.py",
                 "--sdk",
-                "github"
+                "k8s-auto",
+                "--debug"
             ],
             "env": {
                 "PYTHONPATH": "/Users/alankritverma/projects/anysdk-mcp/anysdk-mcp"
-            }
-        },
-        {
-            "name": "Kubernetes Curated",
-            "description": "Hand-selected K8s operations (pods, deployments, services)",
-            "command": "python",
-            "args": [
-                "/Users/alankritverma/projects/anysdk-mcp/anysdk-mcp/mcp_server.py",
-                "--sdk",
-                "k8s"
-            ],
-            "env": {
-                "PYTHONPATH": "/Users/alankritverma/projects/anysdk-mcp/anysdk-mcp"
-            }
+            },
+            "cwd": "/Users/alankritverma/projects/anysdk-mcp/anysdk-mcp"
         }
     ]
 }

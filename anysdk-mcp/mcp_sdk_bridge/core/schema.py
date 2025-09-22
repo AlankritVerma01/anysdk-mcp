@@ -269,7 +269,8 @@ class SchemaGenerator:
                 
                 properties[param_name] = param_type.copy()
                 
-                if param_info["required"]:
+                # Skip **kwargs parameters from required list (they're always optional)
+                if param_info["required"] and not param_info.get("is_kwargs", False):
                     required.append(param_name)
                 elif param_info.get("default") is not None:
                     properties[param_name]["default"] = param_info["default"]

@@ -22,6 +22,34 @@ from pathlib import Path
 # Add the current directory to Python path so we can import our modules
 sys.path.insert(0, str(Path(__file__).parent))
 
+# Auto-load environment variables from .env file
+def load_env_file():
+    """Load environment variables from .env file if it exists"""
+    env_file = Path(__file__).parent / ".env"
+    if env_file.exists():
+        print(f"🔧 Loading environment variables from {env_file}")
+        with open(env_file, 'r') as f:
+            for line in f:
+                line = line.strip()
+                if line and not line.startswith('#') and '=' in line:
+                    # Handle both 'export VAR=value' and 'VAR=value' formats
+                    if line.startswith('export '):
+                        line = line[7:]  # Remove 'export '
+                    
+                    key, value = line.split('=', 1)
+                    # Remove quotes if present
+                    value = value.strip('"\'')
+                    
+                    # Only set if not already in environment (don't override existing)
+                    if key not in os.environ:
+                        os.environ[key] = value
+                        print(f"  ✅ Loaded {key}")
+                    else:
+                        print(f"  ⚠️  {key} already set (keeping existing value)")
+
+# Load .env file before importing CLI
+load_env_file()
+
 from mcp_sdk_bridge.cli import MCPBridgeServer, load_config, find_config_file
 
 

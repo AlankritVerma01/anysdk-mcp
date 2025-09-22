@@ -148,11 +148,37 @@ class GitHubAutoAdapter:
                         {"method": method.name}
                     )
                 
+                # Debug logging
+                print(f"🔍 DEBUG: {method.name} called with kwargs: {kwargs}")
+                print(f"🔍 DEBUG: Expected parameters: {list(method.parameters.keys())}")
+                
+                # Handle special case where MCP Inspector sends single string as kwargs
+                if len(kwargs) == 1 and 'kwargs' in kwargs and isinstance(kwargs['kwargs'], str):
+                    # This is a common case where Inspector sends {"kwargs": "value"} instead of {"param": "value"}
+                    # Try to map it to the first required parameter
+                    required_params = [name for name, info in method.parameters.items() if info.get('required', False)]
+                    if required_params:
+                        first_param = required_params[0]
+                        kwargs = {first_param: kwargs['kwargs']}
+                        print(f"🔧 DEBUG: Remapped kwargs to {first_param}: {kwargs[first_param]}")
+                
                 # Filter kwargs to only include valid parameters
                 filtered_kwargs = {}
                 for param_name, param_info in method.parameters.items():
                     if param_name in kwargs:
                         filtered_kwargs[param_name] = kwargs[param_name]
+                
+                # Validate that we have all required parameters (excluding **kwargs)
+                required_params = [
+                    name for name, info in method.parameters.items() 
+                    if info.get('required', False) and not info.get('is_kwargs', False)
+                ]
+                missing_params = [param for param in required_params if param not in filtered_kwargs]
+                
+                if missing_params:
+                    raise ValueError(f"Missing required parameters: {missing_params}. Provided: {list(kwargs.keys())}")
+                
+                print(f"🔧 DEBUG: Final filtered_kwargs: {filtered_kwargs}")
                 
                 # Call the method
                 result = github_method(**filtered_kwargs)

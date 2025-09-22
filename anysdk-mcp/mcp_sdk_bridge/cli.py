@@ -241,6 +241,9 @@ class MCPBridgeServer:
         # Register meta tools for discovery and introspection
         self._register_meta_tools()
         
+        # Register testing and validation tools
+        self._register_testing_tools()
+        
         # Print comprehensive stats on boot
         print(f"🔧 Registered {registered} tools for {self.sdk_name}")
         print(f"   📖 Read operations: {read_count}")
@@ -573,6 +576,92 @@ class MCPBridgeServer:
                 return {
                     "enrichment_enabled": False,
                     "message": "LLM enrichment is disabled. Enable in config with 'features.llm_enrichment: true'"
+                }
+    
+    def _register_testing_tools(self):
+        """Register testing and validation tools"""
+        
+        @self.mcp.tool(
+            name="tools.validate",
+            description="Validate all tools and check for issues"
+        )
+        def validate_tools():
+            """Validate all tools and return validation results"""
+            try:
+                from .testing.validator import ToolValidator
+                validator = ToolValidator()
+                results = validator.validate_all_tools(self.adapter)
+                
+                return {
+                    "total_tools": len(results),
+                    "valid_tools": len([r for r in results if r.success]),
+                    "invalid_tools": len([r for r in results if not r.success]),
+                    "validation_results": [
+                        {
+                            "tool_name": r.tool_name,
+                            "success": r.success,
+                            "error": r.error,
+                            "suggested_fix": r.suggested_fix,
+                            "example_usage": r.example_usage
+                        }
+                        for r in results
+                    ]
+                }
+            except Exception as e:
+                return {
+                    "error": f"Validation failed: {str(e)}",
+                    "tools": []
+                }
+        
+        @self.mcp.tool(
+            name="tools.test",
+            description="Test a specific tool with example parameters"
+        )
+        def test_tool(tool_name: str, parameters: dict = None):
+            """Test a specific tool safely with given or example parameters"""
+            try:
+                from .testing.validator import ToolTester
+                tester = ToolTester(self.adapter)
+                
+                if parameters is None:
+                    # Generate example parameters
+                    from .testing.validator import ToolValidator
+                    validator = ToolValidator()
+                    validation_results = validator.validate_all_tools(self.adapter)
+                    
+                    for result in validation_results:
+                        if result.tool_name == tool_name and result.example_usage:
+                            parameters = result.example_usage
+                            break
+                    
+                    if parameters is None:
+                        return {
+                            "error": f"No example parameters available for {tool_name}",
+                            "suggestion": "Provide parameters manually"
+                        }
+                
+                result = tester.test_tool_safely(tool_name, parameters)
+                return result
+                
+            except Exception as e:
+                return {
+                    "error": f"Tool testing failed: {str(e)}",
+                    "tool_name": tool_name
+                }
+        
+        @self.mcp.tool(
+            name="tools.health_check", 
+            description="Run comprehensive health check on all tools"
+        )
+        def health_check():
+            """Run health check on all tools and return summary"""
+            try:
+                from .testing.validator import ToolTester
+                tester = ToolTester(self.adapter)
+                return tester.run_tool_health_check()
+            except Exception as e:
+                return {
+                    "error": f"Health check failed: {str(e)}"
                 }
     
     def run(self):

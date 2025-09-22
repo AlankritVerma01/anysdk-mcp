@@ -112,10 +112,16 @@ class SDKDiscoverer:
                 for p_name, p in sig.parameters.items():
                     if p_name == "self": 
                         continue
+                    
+                    # **kwargs parameters should always be optional
+                    is_kwargs = p.kind == p.VAR_KEYWORD
+                    is_required = p.default == p.empty and not is_kwargs
+                    
                     params[p_name] = {
                         "type": getattr(p.annotation, "__name__", str(p.annotation)) if p.annotation != p.empty else "Any",
                         "default": None if p.default == p.empty else p.default,
-                        "required": p.default == p.empty,
+                        "required": is_required,
+                        "is_kwargs": is_kwargs
                     }
                 methods.append(SDKMethod(
                     name=name,
