@@ -52,6 +52,21 @@ cache:
   enabled: false
   ttl_seconds: 300
 
+# Feature flags
+features:
+  llm_enrichment: true  # Enable LLM-based description enrichment
+  plan_apply: true       # Enable plan/apply pattern for write operations
+  pagination: true       # Enable standardized pagination
+  
+# LLM enrichment configuration (when enabled)
+llm:
+  provider: openai
+  model: gpt-4o-mini
+  max_cost_usd: 2.0      # Budget limit for enrichment
+  temperature: 0
+  cache_enrichments: true
+  cache_file: .mcp_cache/github_enrichment.json
+
 # Logging configuration
 logging:
   level: "INFO"

@@ -23,6 +23,7 @@ from .adapters.auto_azure import AzureAutoAdapter, AzureAutoConfig
 from .core.safety import SafetyWrapper, SafetyConfig, RateLimitConfig, SecurityContext
 from .core.classify import classify_method, get_operation_risk_level
 from .core.planapply import Planner
+from .ai.enrich import create_enricher
 
 
 class MCPBridgeServer:
@@ -56,6 +57,13 @@ class MCPBridgeServer:
         
         # Setup planner for write operations
         self.planner = Planner()
+        
+        # Setup LRO handler
+        from .core.lro import LROHandler
+        self.lro = LROHandler()
+        
+        # Setup LLM enrichment if enabled
+        self.enricher = create_enricher(self.config) if self.config else None
         
     def setup_adapter(self):
         """Setup the appropriate SDK adapter"""
@@ -130,6 +138,33 @@ class MCPBridgeServer:
             actual_method = raw_method.split("_", 1)[1] if "_" in raw_method else raw_method
             op_type = classify_method(actual_method)
             risk_level = get_operation_risk_level(actual_method)
+            
+            # Apply LLM enrichment if enabled and heuristics are uncertain
+            enhanced_description = tool_schema.description
+            if self.enricher and (op_type == "unknown" or risk_level == "unknown"):
+                try:
+                    enrichment = self.enricher.enrich_description(
+                        method_name=actual_method,
+                        docstring=tool_schema.description,
+                        signature=str(tool_schema.inputSchema)
+                    )
+                    
+                    # Use enriched description and override classification if confident
+                    if enrichment.enhanced_description:
+                        enhanced_description = enrichment.enhanced_description
+                    
+                    if enrichment.confidence >= 0.7:
+                        if enrichment.operation_type:
+                            op_type = enrichment.operation_type
+                        if enrichment.risk_level:
+                            risk_level = enrichment.risk_level
+                            
+                except Exception as e:
+                    # Don't fail if enrichment fails, just log and continue
+                    print(f"⚠️  LLM enrichment failed for {tool_name}: {e}")
+            
+            # Update tool description with enrichment
+            tool_schema.description = enhanced_description
             
             # Wrap with safety controls and inject default security context for auto-adapters
             def with_default_context(fn):
@@ -279,12 +314,12 @@ class MCPBridgeServer:
                 return {
                     "operations": [
                         {
-                            "operation_id": op_id,
+                            "operation_id": op.operation_id,
                             "status": op.status.value,
                             "progress": op.progress,
                             "started_at": op.started_at.isoformat() if op.started_at else None
                         }
-                        for op_id, op in operations.items()
+                        for op in operations
                     ],
                     "total_count": len(operations)
                 }
@@ -481,6 +516,63 @@ class MCPBridgeServer:
                 return {
                     "error": f"Error exporting tools: {str(e)}",
                     "format": format
+                }
+        
+        # Add LLM enrichment tools if enricher is available
+        if self.enricher:
+            @self.mcp.tool(
+                name="meta.enrichment_stats",
+                description="Get LLM enrichment usage statistics and costs"
+            )
+            def meta_enrichment_stats():
+                """Get statistics about LLM enrichment usage"""
+                try:
+                    cost_summary = self.enricher.get_cost_summary()
+                    return {
+                        "enrichment_enabled": True,
+                        "provider": self.enricher.config.provider,
+                        "model": self.enricher.config.model,
+                        "cost_summary": cost_summary,
+                        "budget_status": {
+                            "max_budget_usd": self.enricher.config.max_cost_usd,
+                            "remaining_budget": cost_summary["budget_remaining"],
+                            "budget_used_percent": round((cost_summary["total_cost_usd"] / self.enricher.config.max_cost_usd) * 100, 2)
+                        }
+                    }
+                except Exception as e:
+                    return {
+                        "error": f"Error getting enrichment stats: {str(e)}",
+                        "enrichment_enabled": True
+                    }
+            
+            @self.mcp.tool(
+                name="meta.reset_enrichment_costs",
+                description="Reset LLM enrichment cost tracking (admin tool)"
+            )
+            def meta_reset_enrichment_costs():
+                """Reset the enrichment cost tracking"""
+                try:
+                    old_cost = self.enricher.cost_tracking.total_cost_usd
+                    self.enricher.reset_costs()
+                    return {
+                        "message": "Enrichment costs reset successfully",
+                        "previous_cost_usd": round(old_cost, 4),
+                        "new_cost_usd": 0.0
+                    }
+                except Exception as e:
+                    return {
+                        "error": f"Error resetting enrichment costs: {str(e)}"
+                    }
+        else:
+            @self.mcp.tool(
+                name="meta.enrichment_stats",
+                description="Get LLM enrichment status (disabled)"
+            )
+            def meta_enrichment_stats():
+                """Show that enrichment is disabled"""
+                return {
+                    "enrichment_enabled": False,
+                    "message": "LLM enrichment is disabled. Enable in config with 'features.llm_enrichment: true'"
                 }
     
     def run(self):

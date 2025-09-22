@@ -218,7 +218,8 @@ def test_planner():
         return {"success": True}
     
     result = planner.apply(plan_id, mock_executor)
-    assert result["success"] is True
+    assert result["status"] == "applied"
+    assert result["result"]["success"] is True
     
     # Plan should be consumed
     assert planner.get_plan(plan_id) is None

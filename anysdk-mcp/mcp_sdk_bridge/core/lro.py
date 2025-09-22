@@ -189,6 +189,24 @@ class LROHandler:
         
         return operations
     
+    async def wait_for_completion(self, operation_id: str, timeout_seconds: int = 300) -> OperationResult:
+        """Wait for an operation to complete"""
+        operation = self.get_operation_status(operation_id)
+        if not operation:
+            raise ValueError(f"Operation {operation_id} not found")
+        
+        start_time = time.time()
+        while operation.status in [OperationStatus.PENDING, OperationStatus.RUNNING]:
+            if time.time() - start_time > timeout_seconds:
+                raise TimeoutError(f"Operation {operation_id} timed out after {timeout_seconds} seconds")
+            
+            await asyncio.sleep(1.0)
+            operation = self.get_operation_status(operation_id)
+            if not operation:
+                raise ValueError(f"Operation {operation_id} was removed during wait")
+        
+        return operation
+    
     def cleanup_completed_operations(self, max_age_hours: int = 24):
         """Clean up old completed operations"""
         cutoff_time = datetime.utcnow() - timedelta(hours=max_age_hours)

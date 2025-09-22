@@ -271,7 +271,7 @@ class SchemaGenerator:
                 
                 if param_info["required"]:
                     required.append(param_name)
-                elif param_info["default"] is not None:
+                elif param_info.get("default") is not None:
                     properties[param_name]["default"] = param_info["default"]
         
         # Handle **kwargs if present

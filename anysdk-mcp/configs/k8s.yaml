@@ -33,7 +33,7 @@ rate_limit:
 safety:
   max_response_size_mb: 50  # K8s can return large objects
   max_execution_time_seconds: 300
-  require_auth: true
+  require_auth: false  # Set to false for auto-adapters (K8s handles its own auth)
   sanitize_inputs: true
   log_operations: true
   
@@ -78,6 +78,21 @@ watch:
   enabled: true
   timeout_seconds: 300
   resource_version_match: "NotOlderThan"
+
+# Feature flags
+features:
+  llm_enrichment: false  # Enable LLM-based description enrichment
+  plan_apply: true       # Enable plan/apply pattern for write operations
+  pagination: true       # Enable standardized pagination
+  
+# LLM enrichment configuration (when enabled)
+llm:
+  provider: openai
+  model: gpt-4o-mini
+  max_cost_usd: 3.0      # Budget limit for enrichment
+  temperature: 0
+  cache_enrichments: true
+  cache_file: .mcp_cache/k8s_enrichment.json
 
 # Caching settings
 cache:

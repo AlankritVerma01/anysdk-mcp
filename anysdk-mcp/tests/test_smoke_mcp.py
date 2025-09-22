@@ -53,12 +53,21 @@ class MCPServerManager:
         )
         
         self.stdio_client = stdio_client(server_params)
-        self.session = await self.stdio_client.__aenter__()
+        read_stream, write_stream = await self.stdio_client.__aenter__()
+        
+        # Create ClientSession from the streams
+        self.session = ClientSession(read_stream, write_stream)
+        await self.session.__aenter__()
+        
+        # Initialize the session
+        await self.session.initialize()
         
         return self.session
     
     async def __aexit__(self, exc_type, exc_val, exc_tb):
         """Clean up server and client"""
+        if hasattr(self, 'session'):
+            await self.session.__aexit__(exc_type, exc_val, exc_tb)
         if hasattr(self, 'stdio_client'):
             await self.stdio_client.__aexit__(exc_type, exc_val, exc_tb)
         
@@ -79,7 +88,7 @@ class TestMCPSmoke:
         """Test basic GitHub auto-adapter functionality"""
         async with MCPServerManager("github-auto") as session:
             # Test ping
-            result = await session.ping()
+            result = await session.send_ping()
             assert result is not None
             
             # List available tools
@@ -189,7 +198,7 @@ class TestMCPSmoke:
         """Test basic Azure auto-adapter functionality (without credentials)"""
         async with MCPServerManager("azure-auto") as session:
             # Test ping
-            result = await session.ping()
+            result = await session.send_ping()
             assert result is not None
             
             # List available tools
@@ -212,7 +221,7 @@ class TestMCPSmoke:
         """Test basic K8s auto-adapter functionality (without cluster)"""
         async with MCPServerManager("k8s-auto") as session:
             # Test ping
-            result = await session.ping()
+            result = await session.send_ping()
             assert result is not None
             
             # List available tools
@@ -256,9 +265,9 @@ class TestMCPServerValidation:
     def test_cli_validation(self):
         """Test CLI validation functionality"""
         result = subprocess.run([
-            sys.executable, str(Path(__file__).parent.parent / "mcp_sdk_bridge" / "cli.py"),
+            sys.executable, "-m", "mcp_sdk_bridge.cli",
             "validate", "--sdk", "github-auto"
-        ], capture_output=True, text=True, timeout=10)
+        ], capture_output=True, text=True, timeout=10, cwd=str(Path(__file__).parent.parent))
         
         assert result.returncode == 0
         assert "github-auto SDK setup is valid" in result.stdout or "validation" in result.stdout.lower()
@@ -266,9 +275,9 @@ class TestMCPServerValidation:
     def test_cli_list(self):
         """Test CLI list functionality"""
         result = subprocess.run([
-            sys.executable, str(Path(__file__).parent.parent / "mcp_sdk_bridge" / "cli.py"),
+            sys.executable, "-m", "mcp_sdk_bridge.cli",
             "list"
-        ], capture_output=True, text=True, timeout=10)
+        ], capture_output=True, text=True, timeout=10, cwd=str(Path(__file__).parent.parent))
         
         assert result.returncode == 0
         assert "Available SDKs:" in result.stdout
